@@ -20,9 +20,26 @@ interface PackageJsonInfo {
     if (!existsSync(packageJsonPath)) {
       return null;
     }
-    const raw = readFileSync(packageJsonPath, 'utf-8');
-    const data = JSON.parse(raw);
-    return { path: packageJsonPath, data };
+    try {
+        const raw = readFileSync(packageJsonPath, 'utf-8');
+        const data = JSON.parse(raw);
+        if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+          return null;
+        }
+        return { path: packageJsonPath, data };
+      } catch {
+        return null;
+      }
+  }
+
+
+  function isStringRecord(value: unknown): value is Record<string, string> {
+    return (
+      typeof value === 'object' &&
+      value !== null &&
+      !Array.isArray(value) &&
+      Object.values(value).every((v) => typeof v === 'string')
+    );
   }
 
 
@@ -43,13 +60,17 @@ interface PackageJsonInfo {
     const lockfilePath = join(repoPath, 'package-lock.json');
     const yarnLockPath = join(repoPath, 'yarn.lock');
     const pnpmLockPath = join(repoPath, 'pnpm-lock.yaml');
+
+    const pkg = readPackageJson(repoPath);
   
-    if (!existsSync(packageJsonPath)) {
-      return {
-        ok: false,
-        error: `No package.json found at ${packageJsonPath}. This does not appear to be a valid npm project.`
-      };
-    }
+    if (!pkg) {
+        return {
+          ok: false,
+          error: existsSync(packageJsonPath)
+            ? `package.json at ${packageJsonPath} could not be read or is not valid JSON.`
+            : `No package.json found at ${packageJsonPath}. This does not appear to be a valid npm project.`
+        };
+      }
   
     const hasLockfile = existsSync(lockfilePath);
 
@@ -105,30 +126,34 @@ interface PackageJsonInfo {
       };
     }
   
-    const dependencies = pkg.data.dependencies ?? {};
-    const devDependencies = pkg.data.devDependencies ?? {};
-  
-    if (packageName in dependencies) {
-      return {
-        ok: true,
-        data: {
-          packageName,
-          currentVersion: dependencies[packageName],
-          dependencyType: 'dependency'
-        }
-      };
-    }
-  
-    if (packageName in devDependencies) {
-      return {
-        ok: true,
-        data: {
-          packageName,
-          currentVersion: devDependencies[packageName],
-          dependencyType: 'devDependency'
-        }
-      };
-    }
+  const dependencies = isStringRecord(pkg.data.dependencies)
+    ? pkg.data.dependencies
+    : {};
+  const devDependencies = isStringRecord(pkg.data.devDependencies)
+    ? pkg.data.devDependencies
+    : {};
+
+  if (Object.hasOwn(dependencies, packageName)) {
+    return {
+      ok: true,
+      data: {
+        packageName,
+        currentVersion: dependencies[packageName],
+        dependencyType: 'dependency'
+      }
+    };
+  }
+
+  if (Object.hasOwn(devDependencies, packageName)) {
+    return {
+      ok: true,
+      data: {
+        packageName,
+        currentVersion: devDependencies[packageName],
+        dependencyType: 'devDependency'
+      }
+    };
+  }
   
     return {
       ok: false,
@@ -313,7 +338,7 @@ app.delete('/mcp', (_req, res) => {
   });
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, '127.0.0.1', () => {
   console.log(
     `UpgradeGuard repo-tooling MCP server listening on http://localhost:${PORT}/mcp`
   );
